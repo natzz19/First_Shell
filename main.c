@@ -4,12 +4,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <fcntl.h>
 #include <errno.h>
 
+#define MAX_ARGS 64
+#define MAX_SEGMENTS 16
 
 char **parse_cmd(char *input);
 
 int exec_builtin(char **args); /* returnar 0 vid funnen och -1 vid icke-funnen */
+
+typedef struct {
+    char *exec_args[MAX_ARGS];
+    char *stdin_redir;
+    char *stdout_redir;
+
+} Segment;
 
 int main () {
 
@@ -26,39 +36,34 @@ int main () {
             pid_t pid;
             int last_stdin = 0;
             char  **cmd = args;
-            bool pipe_found = false;
+
+            Segment segments[MAX_SEGMENTS];
+            memset(segments, 0, sizeof(segments));
+            int current_segment = 0, arg_count = 0;
+
             for (int tok = 0; args[tok] != NULL; tok++) {
 
-                if (*args[tok] == '|') {
-                    args[tok] = NULL, pipe_found = true;
-
-                    pipe(p);
-                    pid = fork();
-                    if (pid != 0) close(p[1]);
-                    if (pid == 0) {
-                        dup2(last_stdin, STDIN_FILENO);
-                        dup2(p[1], STDOUT_FILENO);
-                        execvp(cmd[0], cmd);
-                        wait(NULL);
-                    }
-                    last_stdin = p[0];
-                    cmd = args + tok + 1;
+                if (strcmp(args[tok], "<") == 0) {
+                    if (args[tok + 1] != NULL) {
+                        segments[current_segment].stdin_redir = args[tok + 1];
+                        tok++ // skip filename
+                    } else fprintf(stderr, "nash: no filename specified after <\n");
                 }
-            }
-            if (pipe_found == false) {
-                pid = fork();
-                if (pid == 0) execvp(args[0], args);
-                wait(NULL);
-            } else {
-                pid = fork();
-                if (pid == 0) {
-                    dup2(last_stdin, STDIN_FILENO);
-                    execvp(cmd[0], cmd);
-                    wait(NULL);
+                else if (strcmp(args[tok], ">") == 0) {
+                    if (args[tok + 1] != NULL) {
+                        segments[current_segment].stdout_redir = args[tok + 1];
+                        tok++ // skip filename
+                    } else fprintf(stderr, "nash: no filename specified after >\n");
+                }
+                else if (strcmp(args[tok], "|") == 0) {
+                    current_segment++;
+                    arg_count = 0;
+                }
+                else {
+                    segments[current_segment].exec_args[arg_count++] = args[tok];
                 }
 
             }
-
         }
     }
 
@@ -104,7 +109,7 @@ int exec_builtin(char **args) {
     // check for "exit"
     if (strcmp(args[0], "exit") == 0) {
 
-        if (args[1] != NULL) exit(atoi(args[1]));
+        if (args[1] != NULL) exit(strtol(args[1], NULL, 10)); // se till att ingen implicit typ-kastning sker
         else exit(0);
     }
     return -1; // if cmd is not built in
